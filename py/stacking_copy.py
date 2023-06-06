@@ -5,87 +5,6 @@ import os
 import glob
 import pywt
 
-def calculate_sharpness_pyr(image):
-    # Convert the image to grayscale
-    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    depth = 2
-
-    # Construct a Gaussian pyramid
-    pyramid = [grayscale]
-    for i in range(depth):
-        pyramid.append(cv2.pyrDown(pyramid[i]))
-    
-    # Apply Laplacian to the smallest image in the pyramid
-    laplacian = cv2.Laplacian(pyramid[-1], cv2.CV_64F)
-    
-    # Upscale the laplacian back to the original image size
-    for i in range(depth, 0, -1):
-        laplacian = cv2.pyrUp(laplacian)
-        laplacian = cv2.resize(laplacian, (pyramid[i-1].shape[1], pyramid[i-1].shape[0]))
-    
-    # Calculate the absolute values to ignore edge direction
-    laplacian = np.abs(laplacian)
-    
-    return laplacian
-
-def calculate_sharpness_lap(image):
-    # Convert the image to grayscale
-    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # Apply Gaussian blur to reduce noise
-    grayscale = cv2.GaussianBlur(grayscale, (5, 5), 0)
-    
-    # Compute the Laplacian of the image and then the Laplacian variance
-    laplacian = cv2.Laplacian(grayscale, cv2.CV_64F)
-    sharpness = cv2.convertScaleAbs(laplacian)
-    
-    return sharpness
-
-def calculate_sharpness_ok(image):
-    # wavelet transform
-    # Convert the image to grayscale
-    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    grayscale = cv2.resize(grayscale, (image.shape[1]*2, image.shape[0]*2), interpolation = cv2.INTER_CUBIC)
-
-    # Decompose the image using wavelet transform
-    coeffs = pywt.dwt2(grayscale, 'db1')
-    cA, (cH, cV, cD) = coeffs
-
-    # Compute the energy of the high-frequency coefficients
-    sharpness = np.sqrt(cH**2 + cV**2 + cD**2)
-
-    # Increase contrast via histogram equalization
-    sharpness = cv2.equalizeHist(sharpness.astype(np.uint8))
-
-    return sharpness
-
-# def calculate_sharpness(image):
-#     # Convert the image to grayscale
-#     grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-#     # Decompose the image using wavelet transform
-#     coeffs = pywt.dwt2(grayscale, 'db1')
-#     cA, (cH, cV, cD) = coeffs
-
-#     # Compute the energy of the high-frequency coefficients
-#     energy = np.sqrt(cH**2 + cV**2 + cD**2)
-
-#     # Integrate over a local neighborhood
-#     kernel = np.ones((3, 3), np.float32)/9
-#     sharpness = cv2.filter2D(energy, -1, kernel)
-
-#     # Upscale the image to original size
-#     sharpness = cv2.resize(sharpness, (image.shape[1], image.shape[0]), interpolation = cv2.INTER_CUBIC)
-
-
-#     # Increase contrast via histogram equalization
-#     sharpness = cv2.equalizeHist(sharpness.astype(np.uint8))
-
-
-#     return sharpness
-
 def calculate_sharpness(image, max_levels=3):
     # Convert the image to grayscale
     grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -142,6 +61,61 @@ def blend_images(images, masks):
 
     return blended
 
+def blend_images_pyramid(images, masks, max_levels=3):
+    # Ensure images and masks have the same length
+    if len(images) != len(masks):
+        raise ValueError('Images and masks lists must be of the same length')
+
+    # Create Laplacian pyramid for each image and mask
+    laplacian_pyramids_images = []
+    gaussian_pyramids_masks = []
+    for img, mask in zip(images, masks):
+        # Create Gaussian pyramid for mask
+        mask = cv2.normalize(mask, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        gaussian_pyramid_mask = [mask]
+        for _ in range(max_levels):
+            gaussian_pyramid_mask.append(cv2.pyrDown(gaussian_pyramid_mask[-1]))
+        gaussian_pyramids_masks.append(gaussian_pyramid_mask)
+
+        # Create Laplacian pyramid for image
+        img = img.astype(np.float32)
+        gaussian_pyramid_img = [img]
+        for _ in range(max_levels):
+            gaussian_pyramid_img.append(cv2.pyrDown(gaussian_pyramid_img[-1]))
+        laplacian_pyramid_img = [gaussian_pyramid_img[-1]]
+        for i in range(max_levels, 0, -1):
+            size = (gaussian_pyramid_img[i - 1].shape[1], gaussian_pyramid_img[i - 1].shape[0])
+            expanded = cv2.pyrUp(gaussian_pyramid_img[i], dstsize=size)
+            laplacian = cv2.subtract(gaussian_pyramid_img[i - 1], expanded)
+            laplacian_pyramid_img.append(laplacian)
+        laplacian_pyramids_images.append(laplacian_pyramid_img[::-1])
+
+    # Blend images
+    blended_pyramids = []
+    for i in range(max_levels + 1):
+        # Apply mask to each channel individually
+        blended_channels = []
+        for channel in range(3):
+            blended_channel = sum([cv2.multiply(laplacian_pyramids_images[j][i][:,:,channel], gaussian_pyramids_masks[j][i]) for j in range(len(images))])
+            blended_channels.append(blended_channel)
+        # Combine channels into single image
+        blended = cv2.merge(blended_channels)
+        blended = cv2.convertScaleAbs(blended)
+        blended_pyramids.append(blended)
+
+    # Reconstruct final image
+    output_image = blended_pyramids[0]
+    for i in range(1, max_levels + 1):
+        output_image = cv2.pyrUp(output_image)
+        if output_image.shape[:2] == blended_pyramids[i].shape[:2]:
+            output_image = cv2.add(output_image, blended_pyramids[i])
+        else:
+            print(f"Skip level {i} due to size mismatch!")
+
+    return output_image
+
+
+
 
 
 # Specify the source directory of the images
@@ -176,15 +150,6 @@ for i, img_file in enumerate(image_files):
     # replace 0 with 1 to avoid division by zero
     sharpness_mask[sharpness_mask == 0] = 1
 
-    # # now increase contrast
-    # sharpness_mask = cv2.equalizeHist(sharpness_mask)
-
-    # Normalize to 0-1, then convert to 8-bit (0-255)
-    #sharpness_mask = cv2.normalize(sharpness_mask.astype(np.uint8), None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-
-    # Normalize to 8-bit (0-255), then convert to type np.uint8
-    #sharpness_mask = cv2.normalize(sharpness_mask, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-
     masks.append(sharpness_mask)
 
     # Write the sharpness mask to a new file
@@ -196,3 +161,9 @@ res_img = blend_images(images, masks)
 
 # Save the result
 cv2.imwrite("result.png", res_img)
+
+# now with pyramid
+res_img_pyramid = blend_images_pyramid(images, masks)
+
+# Save the result
+cv2.imwrite("result_pyramid.png", res_img_pyramid)
