@@ -1,0 +1,27 @@
+{
+  "name": "vol-est-tutorial",
+  "version-string": "0.0.1",
+  "dependencies": [
+    {
+      "name": "fmt",
+      "default-features": false
+    },
+    {
+      "name": "date",
+      "default-features": false
+    },
+    {
+      "name": "spdlog",
+      "default-features": false
+    },
+    {
+      "name": "args",
+      "default-features": false
+    },
+    {
+      "name": "opencv4",
+      "platform": "!linux"
+    }
+  ]
+}
+
