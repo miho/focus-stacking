@@ -1,251 +1,222 @@
-//
-// Created by miho on 06.06.2023.
-//
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <vector>
 #include <filesystem>
-#include <thread>
+#include <cmath>
 
-const int PYRAMID_LEVELS = 5;
+//// Equivalent function to Python's glob
+std::vector<std::string> glob(const std::string& pattern) {
+    std::vector<std::string> files;
+    try {
+        for (const auto &entry: std::filesystem::directory_iterator(pattern)) {
+            if (!std::filesystem::is_directory(entry)) {
+                files.push_back(entry.path().string());
+            }
+        }
+    } catch (std::exception& e) {
+        std::cout << e.what() << std::endl;
+    }
+    return files;
+}
 
-// Compute Laplacian pyramid
-std::vector<cv::Mat> laplacianPyramid(const cv::Mat& img, int levels) {
+// Calculate sharpness function
+cv::Mat calculate_sharpness_old(const cv::Mat& image, int max_levels = 5) {
+    cv::Mat grayscale;
+    cv::cvtColor(image, grayscale, cv::COLOR_BGR2GRAY);
+
     std::vector<cv::Mat> pyramid;
-    cv::Mat currentImg = img;
-    for (int i = 0; i < levels; ++i) {
-        cv::Mat down, up;
-        cv::pyrDown(currentImg, down);
-        cv::pyrUp(down, up, currentImg.size());
-        cv::Mat lap = currentImg - up;
-        pyramid.push_back(lap);
-        currentImg = down;
-    }
-    pyramid.push_back(currentImg);
-    return pyramid;
-}
+    pyramid.push_back(grayscale);
 
-std::vector<cv::Mat> blendPyramids(const std::vector<std::vector<cv::Mat>>& imgPyr, const std::vector<std::vector<cv::Mat>>& wPyr) {
-    int n = imgPyr.size();
-    int levels = imgPyr[0].size();
-
-    std::vector<cv::Mat> blendedPyr(levels);
-    for (int l = 0; l < levels; ++l) {
-        cv::Mat& blendedImg = blendedPyr[l];
-
-        // Initialize blendedImg with zeros, matching the size and type of the current image
-        blendedImg = cv::Mat::zeros(imgPyr[0][l].size(), imgPyr[0][l].type());
-
-        for (int i = 0; i < n; ++i) {
-            cv::Mat img = imgPyr[i][l];
-            cv::Mat weights = wPyr[i][l];
-
-            // Ensure weights has the same number of channels as img
-            if (weights.channels() == 1 && img.channels() == 3) {
-                cv::Mat temp;
-                std::vector<cv::Mat> channels = { weights, weights, weights };
-                cv::merge(channels, temp);
-                weights = temp;
-            }
-
-            // Now we can safely multiply img and weights and add to blendedImg
-            cv::Mat weightedImg;
-            cv::multiply(img, weights, weightedImg, 1, img.depth());
-            cv::add(blendedImg, weightedImg, blendedImg, cv::noArray(), img.depth());
-        }
-    }
-    return blendedPyr;
-}
-
-
-//std::vector<cv::Mat> blendPyramids(const std::vector<std::vector<cv::Mat>>& imgPyr, const std::vector<std::vector<cv::Mat>>& wPyr) {
-//    int n = imgPyr.size();
-//    int levels = imgPyr[0].size();
-//
-//    std::vector<cv::Mat> blendedPyr(levels);
-//    for (int l = 0; l < levels; ++l) {
-//        cv::Mat& blendedImg = blendedPyr[l];
-//        for (int i = 0; i < n; ++i) {
-//            cv::Mat img = imgPyr[i][l];
-//            cv::Mat weights = wPyr[i][l];
-//
-//            // Convert weights to a 3-channel image if it's not already
-//            if (weights.channels() == 1 && img.channels() == 3) {
-//                cv::cvtColor(weights, weights, cv::COLOR_GRAY2BGR);
-//            }
-//
-//            if (blendedImg.empty()) {
-//                // If blendedImg is empty, this is the first image for this level
-//                // Just multiply it by its weights and use that as the initial blendedImg
-//                cv::multiply(img, weights, blendedImg, 1, img.depth());
-//            } else {
-//                // If blendedImg is not empty, add the weighted image to it
-//                cv::Mat weightedImg;
-//                cv::multiply(img, weights, weightedImg, 1, img.depth());
-//                cv::add(blendedImg, weightedImg, blendedImg, cv::noArray(), img.depth());
-//            }
-//        }
-//    }
-//    return blendedPyr;
-//}
-
-
-
-// Collapse a Laplacian pyramid to get a single image
-cv::Mat collapsePyramid(const std::vector<cv::Mat>& pyramid) {
-    cv::Mat img = pyramid.back();
-    for (int i = pyramid.size() - 2; i >= 0; --i) {
-        cv::Mat up;
-        cv::pyrUp(img, up, pyramid[i].size());
-        img = up + pyramid[i];
-    }
-    return img;
-}
-
-std::vector<cv::Mat> gaussianPyramid(const cv::Mat& img, int levels) {
-    std::vector<cv::Mat> pyramid(levels);
-    pyramid[0] = img;
-    for (int i = 1; i < levels; ++i) {
-        cv::pyrDown(pyramid[i-1], pyramid[i], cv::Size(pyramid[i-1].cols/2, pyramid[i-1].rows/2));
-    }
-    return pyramid;
-}
-
-
-
-// Your helper function implementations for image pyramid method here...
-// laplacianPyramid, blendPyramids, collapsePyramid
-
-cv::Mat focusMeasure(const cv::Mat& img) {
-    cv::Mat imgGray, imgLaplacian, fm;
-    cv::cvtColor(img, imgGray, cv::COLOR_BGR2GRAY);
-    cv::Laplacian(imgGray, imgLaplacian, CV_32F, 3, 1, 0, cv::BORDER_DEFAULT);
-
-    cv::convertScaleAbs(imgLaplacian, fm);
-
-//    cv::imshow("before mask", fm);
-//    cv::waitKey(0);
-
-    // clip dark values
-    cv::threshold(fm, fm, 30, 0, cv::THRESH_TOZERO);
-
-//    // show after mask
-//    cv::imshow("after mask", fm);
-//    cv::waitKey(0);
-
-    cv::medianBlur(fm, fm, 3);  // Add median filter
-    return fm;
-}
-
-void stackImagesThread(int startRow, int endRow, const std::vector<cv::Mat>& images, const std::vector<cv::Mat>& focusMeasures, cv::Mat& stackedImage) {
-    for (int y = startRow; y < endRow; ++y) {
-        for (int x = 0; x < stackedImage.cols; ++x) {
-            int bestFocusIdx = 0;
-            for (int i = 0; i < images.size(); ++i) {
-                if (focusMeasures[i].at<uchar>(y, x) > focusMeasures[bestFocusIdx].at<uchar>(y, x)) {
-                    bestFocusIdx = i;
-                }
-            }
-            stackedImage.at<cv::Vec3b>(y, x) = images[bestFocusIdx].at<cv::Vec3b>(y, x);
-        }
-    }
-}
-
-void stackImagesPyramidThread(int startRow, int endRow, const std::vector<cv::Mat>& images, const std::vector<cv::Mat>& focusMeasures, cv::Mat& stackedImage) {
-    int n = images.size();
-    int width = images[0].cols;
-    int height = endRow - startRow;  // the height of the region this thread is responsible for
-
-    std::cout << "!!! 1 !!!" << std::endl;
-
-    // Create the Laplacian pyramids for the images and the Gaussian pyramids for the focus measures
-    std::vector<std::vector<cv::Mat>> imgPyr(n), fmPyr(n);
-    for (int i = 0; i < n; ++i) {
-        imgPyr[i] = laplacianPyramid(images[i](cv::Rect(0, startRow, width, height)), PYRAMID_LEVELS);
-        fmPyr[i] = gaussianPyramid(focusMeasures[i](cv::Rect(0, startRow, width, height)), PYRAMID_LEVELS);
+    for (int i = 0; i < max_levels; i++) {
+        cv::Mat next_level;
+        cv::pyrDown(pyramid.back(), next_level);
+        pyramid.push_back(next_level);
     }
 
-    std::cout << "!!! 2 !!!" << std::endl;
+    cv::Mat sharpness = cv::Mat::zeros(image.size(), CV_64F);
 
-    // Blend the pyramids and collapse them back into a single image
-    std::vector<cv::Mat> blendedPyr = blendPyramids(imgPyr, fmPyr);
+    for (const auto & level : pyramid) {
+        cv::Mat laplacian, energy;
+        cv::Laplacian(level, laplacian, CV_64F);
+        energy = cv::abs(laplacian);
+        cv::resize(energy, energy, image.size());
+        sharpness += energy;
+    }
 
-    std::cout << "!!! 2b !!!" << std::endl;
+    return sharpness;
+}
 
-    cv::Mat result = collapsePyramid(blendedPyr);
+cv::Mat calculate_sharpness(const cv::Mat& image, int max_levels = 3) {
+    // Convert the image to grayscale
+    cv::Mat grayscale;
+    cv::cvtColor(image, grayscale, cv::COLOR_BGR2GRAY);
 
-    std::cout << "!!! 3 !!!" << std::endl;
+    // Construct the Laplacian pyramid
+    std::vector<cv::Mat> pyramid{grayscale};
+    for (int i = 0; i < max_levels; i++) {
+        cv::Mat next_level;
+        cv::pyrDown(pyramid.back(), next_level);
+        pyramid.push_back(next_level);
+    }
 
-    // Write the result back to the correct rows of the stackedImage
-    result.copyTo(stackedImage(cv::Rect(0, startRow, width, height)));
+    // For each level in the pyramid, calculate the local energy
+    std::vector<cv::Mat> energy_pyramid;
+    for (auto& level : pyramid) {
+        cv::Mat laplacian;
+//        cv::Laplacian(level, laplacian, CV_64F);
+        cv::Laplacian( level, laplacian, CV_64F, 3, /*scale*/0.25, /*delta*/0.0);
+        cv::Mat energy;
+        cv::convertScaleAbs(laplacian, energy);
+        // Upscale to the original size
+        cv::resize(energy, energy, cv::Size(image.cols, image.rows), 0, 0, cv::INTER_LINEAR);
+        energy_pyramid.push_back(energy);
+    }
 
-    std::cout << "!!! 4 !!!" << std::endl;
+    // Sum up the energy images to get the combined sharpness map
+    cv::Mat sharpness = cv::Mat::zeros(image.size(), CV_32F);
+    for (auto& energy : energy_pyramid) {
+        cv::Mat float_energy;
+        energy.convertTo(float_energy, CV_32F);
+        sharpness += float_energy;
+    }
+
+    return sharpness;
+}
+
+// Gamma correction function
+cv::Mat gammaCorrection(const cv::Mat& image, double gamma) {
+    cv::Mat lookup_table(1, 256, CV_8U);
+    uchar* p = lookup_table.ptr();
+    for (int i = 0; i < 256; ++i)
+        p[i] = cv::saturate_cast<uchar>(pow(i / 255.0, gamma) * 255.0);
+
+    cv::Mat corrected_image;
+    cv::LUT(image, lookup_table, corrected_image);
+
+    return corrected_image;
+}
+
+cv::Mat blendImages(const std::vector<cv::Mat>& images, const std::vector<cv::Mat>& masks) {
+
+    std::vector<cv::Mat> norm_masks;
+    for (const auto& mask : masks) {
+        cv::Mat float_mask;
+        mask.convertTo(float_mask, CV_32F);
+        cv::Mat mask3channel;
+        cv::cvtColor(float_mask, mask3channel, cv::COLOR_GRAY2BGR);
+        norm_masks.push_back(mask3channel / 255.0);
+    }
+
+    cv::Mat mask_sum = cv::Mat::zeros(images[0].size(), CV_32FC3);
+    for (const auto& mask : norm_masks) {
+        mask_sum += mask;
+    }
+
+    for (auto& mask : norm_masks) {
+        cv::divide(mask, mask_sum, mask, 1, CV_32F);
+    }
+
+    cv::Mat blended = cv::Mat::zeros(images[0].size(), CV_32FC3);
+    for (size_t i = 0; i < images.size(); i++) {
+        cv::Mat float_image;
+        images[i].convertTo(float_image, CV_32F);
+        blended += float_image.mul(norm_masks[i]);
+    }
+
+    blended.convertTo(blended, CV_8U);
+
+    return blended;
 }
 
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cout << "Usage: ./FocusStacking [image_directory] [method]\n";
-        return -1;
+// Blend images function
+cv::Mat blendImages_old(const std::vector<cv::Mat>& images, const std::vector<cv::Mat>& masks) {
+
+    std::vector<cv::Mat> norm_masks;
+    for (const auto& mask : masks) {
+        cv::Mat float_mask;
+        mask.convertTo(float_mask, CV_32F);
+        norm_masks.push_back(float_mask / 255.0);
     }
 
-    std::string path = argv[1];
-    std::string method = argv[2];
+    cv::Mat mask_sum = cv::Mat::zeros(images[0].size(), CV_32F);
+    for (const auto& mask : norm_masks) {
+        mask_sum += mask;
+    }
+
+    for (auto& mask : norm_masks) {
+        cv::divide(mask, mask_sum, mask, 1, CV_32F);
+    }
+
+    cv::Mat blended = cv::Mat::zeros(images[0].size(), CV_32F);
+    for (size_t i = 0; i < images.size(); i++) {
+        cv::Mat float_image;
+        images[i].convertTo(float_image, CV_32F);
+        blended += float_image.mul(norm_masks[i]);
+    }
+
+    blended.convertTo(blended, CV_8U);
+
+    return blended;
+}
+
+int main() {
+    std::string src_directory = "C:/SP7-DATA/Users/miho/Downloads/focus-stacking-master/focus-stacking-master/example-images";
+
+    // log folder
+    std::cout << "Processing folder: " << src_directory << std::endl;
+
+    // Create masks directory
+    std::filesystem::create_directory("masks");
 
     std::vector<cv::Mat> images;
-    for (const auto & entry : std::filesystem::directory_iterator(path)) {
+    std::vector<cv::Mat> masks;
 
-        auto img = cv::imread(entry.path().string());
+    std::vector<std::string> image_files = glob(src_directory);
 
-        if (img.empty()) {
-            std::cout << "Failed to load image: " << entry.path() << "\n";
-            continue;
-        }
+    // Print the matched files
+    for (const auto& file : image_files) {
+        std::cout << file << std::endl;
+    }
 
-        // log the image name
-        std::cout << entry.path() << "\n";
+    for (size_t i = 0; i < image_files.size(); i++) {
 
+        // log progress
+        std::cout << "Processing image " << i + 1 << " of " << image_files.size() << std::endl;
+
+        cv::Mat img = cv::imread(image_files[i]);
         images.push_back(img);
+
+        cv::Mat sharpness_mask = calculate_sharpness(img);
+
+        // Normalize
+        double lower, upper;
+        cv::minMaxIdx(sharpness_mask, &lower, &upper);
+        sharpness_mask = (sharpness_mask - lower) / (upper - lower);
+
+        // Convert to 8-bit (0-255)
+        sharpness_mask.convertTo(sharpness_mask, CV_8U, 255);
+
+        // sharpness_mask = gammaCorrection(sharpness_mask, 0);
+
+        // mask min should be 1 instead of 0, max remains at 255
+        sharpness_mask.setTo(1, sharpness_mask == 0);
+
+
+        masks.push_back(sharpness_mask);
+
+        // get file name without extension and parent path (Windows and Unix compatible
+        std::string file_name = std::filesystem::path(image_files[i]).stem().string();
+
+        // Save mask
+        cv::imwrite("masks/"+file_name + ".png", sharpness_mask);
     }
 
-    std::vector<cv::Mat> focusMeasures;
-    for (const auto & img : images) {
-        focusMeasures.push_back(focusMeasure(img));
-    }
+    // Blend images
+    cv::Mat result = blendImages(images, masks);
 
-    cv::Mat stackedImage = cv::Mat::zeros(images[0].size(), images[0].type());
-
-    // Determine the number of threads and rows per thread
-    int numThreads = 1;//std::thread::hardware_concurrency();
-    int rowsPerThread = stackedImage.rows / numThreads;
-
-    // Launch threads for stacking
-    std::vector<std::thread> threads;
-    if (method == "simple") {
-        for (int i = 0; i < numThreads; ++i) {
-            int startRow = i * rowsPerThread;
-            // Ensure the last thread processes the remaining rows if the number of rows isn't divisible evenly
-            int endRow = (i == numThreads - 1) ? stackedImage.rows : startRow + rowsPerThread;
-            threads.push_back(std::thread(stackImagesThread, startRow, endRow, std::ref(images), std::ref(focusMeasures), std::ref(stackedImage)));
-        }
-    } else if (method == "pyramid") {
-        for (int i = 0; i < numThreads; ++i) {
-            int startRow = i * rowsPerThread;
-            int endRow = (i == numThreads - 1) ? stackedImage.rows : startRow + rowsPerThread;
-            threads.push_back(std::thread(stackImagesPyramidThread, startRow, endRow, std::ref(images), std::ref(focusMeasures), std::ref(stackedImage)));
-        }
-    } else {
-        std::cout << "Invalid method. Choose 'simple' or 'pyramid'.\n";
-        return -1;
-    }
-
-    // Wait for all threads to finish
-    for (std::thread & t : threads) {
-        t.join();
-    }
-
-    cv::imshow("Stacked Image", stackedImage);
-    cv::waitKey(0);
+    // Save result
+    cv::imwrite("result.png", result);
 
     return 0;
 }
