@@ -1,6 +1,6 @@
 
 set(FOCUS_STACKER_HEADERS
-)
+        include/glob/glob.hpp)
 
 set(FOCUS_STACKER_SRC
         cpp/main.cpp
