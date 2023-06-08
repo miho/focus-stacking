@@ -9,6 +9,12 @@
 
 #include "log-utils.h"
 
+/**
+ * @brief fills holes in a binary image
+ * @param binary_input binary image
+ * @param dst output image
+ * @param flood_location location to start the flood fill (optional)
+ */
 void fill_binary_image(const cv::Mat& binary_input, cv::Mat& dst, cv::Point flood_location = cv::Point(0,0));
 std::string type2str(int type);
 
@@ -26,11 +32,28 @@ std::tuple<std::vector<std::string>, std::vector<std::string>> read_images_to_st
 
 void compute_diff(cv::Mat img_1, cv::Mat img_2, cv::Mat& diff_img, double img_scale, int kernel_size, std::vector<int>& tiles, int num_tiles_x, int num_tiles_y);
 
+/**#
+ * @brief aligns an image to a reference image
+ * The function needs a reference image and an image to align. Those may be of reduced size. Then the function
+ * takes another image of original size and applies the alignment transformation to it.
+ * @param ref_img reference image (reduced size)
+ * @param img image to align (reduced size)
+ * @param img_orig original image (full size)
+ * @param img_aligned aligned image (full size)
+ */
 void align_image(const cv::Mat &ref_img, const cv::Mat &img, const cv::Mat &img_orig, cv::Mat &img_aligned);
+
+/**
+ * @brief aligns a list of images
+ * @param images images to align (input)
+ * @param aligned_images aligned images (output)
+ * @param resize_factor_for_alignment resize factor for perfoming the alignment
+ */
+void align_images(const std::vector<cv::Mat> &images, std::vector<cv::Mat> &aligned_images, const float resize_factor_for_alignment=0.25f);
 
 std::tuple<cv::Mat,std::vector<cv::Mat>> stack_images(
         const std::vector<cv::Mat> &images,
-        const float grayscale_factor=0.25f);
+        const float resize_factor_for_grayscale_imgs=0.25f);
 
 cv::Mat calculate_sharpness(const cv::Mat& image, int max_levels = 3, int kernel_size = 3, double scale = 0.25, double delta = 0.0);
 cv::Mat gammaCorrection(const cv::Mat& image, double gamma);

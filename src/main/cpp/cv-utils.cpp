@@ -372,6 +372,77 @@ void align_image(const cv::Mat &ref_img, const cv::Mat &img, const cv::Mat &img_
     }
 }
 
+void align_images(const std::vector<cv::Mat> &images, std::vector<cv::Mat> &aligned_images, const float resize_factor_for_alignment) {
+
+    std::vector<cv::Mat> images_grayscale(images.size());
+
+    std::vector<cv::Mat> images_float = images;
+    std::atomic<size_t> i = 0;
+
+// read images in parallel
+    std::mutex m;
+    std::for_each(
+#ifdef __APPLE__
+            // std::execution::par, TODO find out how to run parallel for
+#else
+            std::execution::par,
+#endif
+            std::begin(images),
+            std::end(images), [&](auto img) {
+
+                size_t local_i = i++;
+                if (img.type() != CV_32FC3) {
+                    LOG_INFO("images to stack must be of type CV_32FC3! converting image[{}] from {} to CV_32FC3...",
+                             local_i, type2str(img.type())
+                    );
+                    cv::Mat img_32fc3;
+                    img.convertTo(img_32fc3, CV_32FC3);
+                    {
+                        std::lock_guard<std::mutex> lock(m);
+                        images_float[local_i] = img_32fc3;
+                    }
+                }
+
+// convert to grayscale and rescale
+                {
+                    cv::Mat img_resized;
+                    cv::resize(img, img_resized, cv::Size(), resize_factor_for_alignment, resize_factor_for_alignment);
+                    cv::Mat img_gray;
+                    cvtColor(img_resized, img_gray, cv::COLOR_BGR2GRAY);
+                    {
+                        std::lock_guard<std::mutex> lock(m);
+                        images_grayscale[local_i] = img_gray;
+                    }
+                }
+            });
+
+// use first image as reference image
+    cv::Mat ref_img = images_grayscale[0];
+
+// image to analyze
+    cv::Mat img = images_grayscale[1];
+
+// align images
+    i = 0;
+    std::for_each(
+#ifdef __APPLE__
+            // std::execution::par, TODO find out how to run parallel for
+#else
+            std::execution::par,
+#endif
+            std::begin(images),
+            std::end(images), [&](auto img) {
+                size_t local_i = i++;
+                LOG_INFO("aligning image: {}", local_i);
+                cv::Mat img_aligned;
+                align_image(ref_img, images_grayscale[local_i], images_float[local_i], img_aligned);
+                {
+                    std::lock_guard<std::mutex> lock(m);
+                    aligned_images.push_back(img_aligned);
+                }
+            });
+}
+
 std::tuple<cv::Mat,std::vector<cv::Mat>> stack_images(const std::vector<cv::Mat> &images, const float grayscale_factor) {
 
     std::vector<cv::Mat> images_grayscale(images.size());
