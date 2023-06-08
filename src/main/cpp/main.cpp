@@ -36,7 +36,7 @@ cv::Mat calculate_sharpness_old(const cv::Mat& image, int max_levels = 5) {
     return sharpness;
 }
 
-cv::Mat calculate_sharpness(const cv::Mat& image, int max_levels = 3) {
+cv::Mat calculate_sharpness(const cv::Mat& image, int max_levels = 3, int kernel_size = 3, double scale = 0.25, double delta = 0.0) {
     // Convert the image to grayscale
     cv::Mat grayscale;
     cv::cvtColor(image, grayscale, cv::COLOR_BGR2GRAY);
@@ -54,11 +54,13 @@ cv::Mat calculate_sharpness(const cv::Mat& image, int max_levels = 3) {
     for (auto& level : pyramid) {
         cv::Mat laplacian;
 //        cv::Laplacian(level, laplacian, CV_64F);
-        cv::Laplacian( level, laplacian, CV_64F, 3, /*scale*/0.25, /*delta*/0.0);
+        cv::Laplacian( level, laplacian, CV_64F, kernel_size, /*scale*/scale, /*delta*/delta);
         cv::Mat energy;
         cv::convertScaleAbs(laplacian, energy);
         // Upscale to the original size
-        cv::resize(energy, energy, cv::Size(image.cols, image.rows), 0, 0, cv::INTER_LINEAR);
+        cv::resize(energy, energy,
+                   cv::Size(image.cols, image.rows),
+                   0, 0, cv::INTER_LINEAR);
         energy_pyramid.push_back(energy);
     }
 
@@ -170,7 +172,7 @@ struct ProgramOptions
     std::string mask_folder;
     bool verbose = false;
     int kernelSize = 3;
-    double threshold = 0.0;
+    double delta = 0.0;
     double scale = 1.0;
     double gamma = 1.0;
     int numLayers = 2;
@@ -187,10 +189,10 @@ ProgramOptions parse_and_check_args(int argc, char **argv)
     args::ValueFlag<std::string> output(parser, "output", "The output folder", {'o', "output"});
     args::ValueFlag<std::string> mask(parser, "masks", "The mask files/folder", {'m', "mask"});
     args::Flag verbose(parser, "verbose", "Verbose output", {'V', "verbose"});
-    args::ValueFlag<int> kernelSize(parser, "kernel-size", "The Laplace kernel size", {'k', "kernel-size"}, 3);
-    args::ValueFlag<double> threshold(parser, "threshold", "The Laplace threshold", {'t', "threshold"}, 0.0);
-    args::ValueFlag<double> scale(parser, "scale", "The Laplace scale", {'s', "scale"}, 1.0);
-    args::ValueFlag<double> gamma(parser, "gamma", "The Laplace gamma", {'g', "gamma"}, 1.0);
+    args::ValueFlag<int> kernelSize(parser, "kernel-size", "The kernel size of the Laplacian", {'k', "kernel-size"}, 3);
+    args::ValueFlag<double> delta(parser, "delta", "The delta of the Laplacian (shifts output img)", {'d', "delta"}, 0.0);
+    args::ValueFlag<double> scale(parser, "scale", "The scale of the Laplacian", {'s', "scale"}, 1.0);
+    args::ValueFlag<double> gamma(parser, "gamma", "The gamma correction applied to the masks", {'g', "gamma"}, 1.0);
     args::ValueFlag<int> numLayers(parser, "num-layers", "The number of layers for Laplace pyramid", {'l', "num-layers"}, 2);
 
     try
@@ -293,18 +295,12 @@ ProgramOptions parse_and_check_args(int argc, char **argv)
         }
     }
 
-    if(threshold) {
-        options.threshold = args::get(threshold);
-
-        // warn, currently not used
-        std::cout << "WARNING: threshold is currently not used" << std::endl;
+    if(delta) {
+        options.delta = args::get(delta);
     }
 
     if(scale) {
         options.scale = args::get(scale);
-
-        // warn, currently not used
-        std::cout << "WARNING: scale is currently not used" << std::endl;
     }
 
     if(gamma) {
@@ -320,7 +316,7 @@ ProgramOptions parse_and_check_args(int argc, char **argv)
             exit(1);
         } else if(options.numLayers > 10) {
             // wow, I hope you know what you are doing
-            std::cout << "WARNING: Wow, I hope you know what you are doing ;)" << std::endl;
+            std::cout << "WARNING: Wow, numLayers is very large. I hope you know what you are doing ;)" << std::endl;
         }
     }
 
@@ -376,7 +372,7 @@ int main(int argc, char **argv)
         // log progress
         std::cout << "analyzing sharpness of image " << (i + 1) << " of " << image_files.size() << std::endl;
 
-        cv::Mat sharpness_mask = calculate_sharpness(img);
+        cv::Mat sharpness_mask = calculate_sharpness(img, options.numLayers, options.kernelSize, options.scale, options.delta);
 
         // Normalize
         double lower, upper;
@@ -401,7 +397,7 @@ int main(int argc, char **argv)
     }
 
     if (images.empty()) {
-        std::cerr << "ERROR: No images found" << std::endl;
+        std::cerr << "ERROR: No images found. Supported formats are: JPG, PNG" << std::endl;
         exit(1);
     }
 
