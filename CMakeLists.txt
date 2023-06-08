@@ -17,7 +17,8 @@ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/src/main/include/)
 
 
 # set(OpenCV_STATIC ON)
-FIND_PACKAGE( OpenCV 4.1 COMPONENTS core imgproc photo imgcodecs objdetect features2d highgui REQUIRED)
+#FIND_PACKAGE( OpenCV 4.1 COMPONENTS core imgproc photo imgcodecs objdetect features2d highgui REQUIRED)
+FIND_PACKAGE( OpenCV 4.1 COMPONENTS core imgproc photo imgcodecs objdetect features2d highgui video dnn REQUIRED)
 INCLUDE_DIRECTORIES( ${OpenCV_INCLUDE_DIRS} )
 
 message(STATUS "OpenCV library status:")
